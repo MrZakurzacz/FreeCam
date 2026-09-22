@@ -1,0 +1,81 @@
+name: Publish test release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag"
+        required: true
+        default: "v0.0.1-test.1"
+      source_ref:
+        description: "Branch or commit to build"
+        required: true
+        default: "feature/m0-h264-preview"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/publish-test-release.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: windows-2022
+    env:
+      DEFAULT_TAG: v0.0.1-test.1
+      DEFAULT_SOURCE_REF: feature/m0-h264-preview
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Select release inputs
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "RELEASE_TAG=${{ inputs.tag }}" >> $env:GITHUB_ENV
+            "SOURCE_REF=${{ inputs.source_ref }}" >> $env:GITHUB_ENV
+          } else {
+            "RELEASE_TAG=$env:DEFAULT_TAG" >> $env:GITHUB_ENV
+            "SOURCE_REF=$env:DEFAULT_SOURCE_REF" >> $env:GITHUB_ENV
+          }
+
+      - name: Checkout test source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+
+      - name: Configure
+        run: cmake -S windows -B windows/build -A x64
+
+      - name: Build
+        run: cmake --build windows/build --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item windows/build/Release/FreeCamReceiver.exe dist/FreeCamReceiver.exe
+          Compress-Archive -Path dist/FreeCamReceiver.exe -DestinationPath dist/FreeCamReceiver-windows-x64.zip -Force
+
+      - name: Publish prerelease
+        shell: pwsh
+        run: |
+          $notes = @"
+          FreeCam M0 test build.
+
+          Includes:
+          - Windows 10 / Windows 11 receiver
+          - TCP control handshake
+          - UDP H.264 receive/reassembly
+          - Media Foundation H.264 decode
+          - Win32 live preview window
+
+          This is a development prerelease, not a finished virtual webcam.
+          "@
+
+          gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:RELEASE_TAG" dist/FreeCamReceiver-windows-x64.zip --clobber --repo "$env:GITHUB_REPOSITORY"
+          } else {
+            gh release create "$env:RELEASE_TAG" dist/FreeCamReceiver-windows-x64.zip --target "$env:SOURCE_REF" --title "FreeCam $env:RELEASE_TAG" --notes "$notes" --prerelease --repo "$env:GITHUB_REPOSITORY"
+          }
