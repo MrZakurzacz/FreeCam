@@ -2,14 +2,14 @@
 
 #include "H264Decoder.hpp"
 
+#include <windows.h>
+
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <thread>
 #include <vector>
-
-struct HWND__;
 
 class PreviewWindow {
 public:
@@ -24,19 +24,19 @@ public:
     void present(DecodedFrame&& frame);
 
 private:
-    static long long __stdcall windowProc(
-        HWND__* hwnd,
-        unsigned int message,
-        unsigned long long wparam,
-        long long lparam
+    static LRESULT CALLBACK windowProc(
+        HWND hwnd,
+        UINT message,
+        WPARAM wparam,
+        LPARAM lparam
     );
 
     void run();
-    void paint(HWND__* hwnd);
+    void paint(HWND hwnd);
 
     std::thread thread_;
     std::atomic_bool running_ = false;
-    HWND__* hwnd_ = nullptr;
+    HWND hwnd_ = nullptr;
 
     std::mutex startup_mutex_;
     std::condition_variable startup_cv_;
