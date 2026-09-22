@@ -10,6 +10,8 @@ add_executable(FreeCamReceiver
     src/H264Decoder.hpp
     src/PreviewWindow.cpp
     src/PreviewWindow.hpp
+    src/SharedFrameWriter.cpp
+    src/SharedFrameWriter.hpp
 )
 
 target_compile_features(FreeCamReceiver PRIVATE cxx_std_20)
