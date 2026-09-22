@@ -17,10 +17,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure
         run: cmake -S windows -B windows/build -A x64
 
       - name: Build
         run: cmake --build windows/build --config Release
+
+      - name: Upload receiver
+        uses: actions/upload-artifact@v7
+        with:
+          path: windows/build/Release/FreeCamReceiver.exe
+          archive: false
+          retention-days: 14
