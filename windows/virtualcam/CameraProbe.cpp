@@ -166,9 +166,105 @@ bool verify_capabilities(
 bool run_capture_graph(
     IBaseFilter* source
 ) {
+    IPin* source_pin = nullptr;
+
+    HRESULT hr = source->FindPin(
+        L"Output",
+        &source_pin
+    );
+
+    if (FAILED(hr) || !source_pin) {
+        std::wcerr
+            << L"Could not find FreeCam output pin.\n";
+        return false;
+    }
+
+    IAMStreamConfig* config = nullptr;
+
+    hr = source_pin->QueryInterface(
+        IID_IAMStreamConfig,
+        reinterpret_cast<void**>(&config)
+    );
+
+    if (FAILED(hr) || !config) {
+        source_pin->Release();
+        return false;
+    }
+
+    int count = 0;
+    int caps_size = 0;
+
+    hr = config->GetNumberOfCapabilities(
+        &count,
+        &caps_size
+    );
+
+    if (FAILED(hr) || count <= 0) {
+        config->Release();
+        source_pin->Release();
+        return false;
+    }
+
+    AM_MEDIA_TYPE* selected_type = nullptr;
+
+    for (int index = 0; index < count; ++index) {
+        AM_MEDIA_TYPE* media_type = nullptr;
+        VIDEO_STREAM_CONFIG_CAPS caps{};
+
+        hr = config->GetStreamCaps(
+            index,
+            &media_type,
+            reinterpret_cast<BYTE*>(&caps)
+        );
+
+        if (FAILED(hr) || !media_type) {
+            continue;
+        }
+
+        if (media_type->subtype ==
+                kMediaSubtypeI420 ||
+            media_type->subtype ==
+                MEDIASUBTYPE_YUY2) {
+            selected_type = media_type;
+            break;
+        }
+
+        free_media_type(*media_type);
+        CoTaskMemFree(media_type);
+    }
+
+    if (!selected_type) {
+        config->Release();
+        source_pin->Release();
+        std::wcerr
+            << L"No WebRTC-style I420/YUY2 format found.\n";
+        return false;
+    }
+
+    std::wcout
+        << L"Using WebRTC-style format: "
+        << subtype_name(selected_type->subtype)
+        << L"\n";
+
+    hr = config->SetFormat(selected_type);
+
+    if (FAILED(hr)) {
+        std::wcerr
+            << L"IAMStreamConfig::SetFormat failed: 0x"
+            << std::hex
+            << static_cast<unsigned long>(hr)
+            << L"\n";
+
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
+        return false;
+    }
+
     IGraphBuilder* graph = nullptr;
 
-    HRESULT hr = CoCreateInstance(
+    hr = CoCreateInstance(
         CLSID_FilterGraph,
         nullptr,
         CLSCTX_INPROC_SERVER,
@@ -177,8 +273,10 @@ bool run_capture_graph(
     );
 
     if (FAILED(hr) || !graph) {
-        std::wcerr
-            << L"Could not create DirectShow graph.\n";
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -194,8 +292,10 @@ bool run_capture_graph(
 
     if (FAILED(hr) || !renderer) {
         graph->Release();
-        std::wcerr
-            << L"Could not create null renderer.\n";
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -207,8 +307,10 @@ bool run_capture_graph(
     if (FAILED(hr)) {
         renderer->Release();
         graph->Release();
-        std::wcerr
-            << L"Could not add FreeCam to graph.\n";
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -220,16 +322,12 @@ bool run_capture_graph(
     if (FAILED(hr)) {
         renderer->Release();
         graph->Release();
-        std::wcerr
-            << L"Could not add null renderer to graph.\n";
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
-
-    IPin* source_pin = nullptr;
-    source->FindPin(
-        L"Output",
-        &source_pin
-    );
 
     IEnumPins* renderer_pins = nullptr;
     renderer->EnumPins(&renderer_pins);
@@ -245,36 +343,37 @@ bool run_capture_graph(
         renderer_pins->Release();
     }
 
-    if (!source_pin || !renderer_pin) {
-        if (source_pin) {
-            source_pin->Release();
-        }
-        if (renderer_pin) {
-            renderer_pin->Release();
-        }
+    if (!renderer_pin) {
         renderer->Release();
         graph->Release();
-        std::wcerr
-            << L"Could not obtain graph pins.\n";
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
-    hr = graph->Connect(
+    hr = graph->ConnectDirect(
         source_pin,
-        renderer_pin
+        renderer_pin,
+        selected_type
     );
 
-    source_pin->Release();
     renderer_pin->Release();
 
     if (FAILED(hr)) {
-        renderer->Release();
-        graph->Release();
         std::wcerr
-            << L"Could not connect FreeCam capture graph: 0x"
+            << L"ConnectDirect failed: 0x"
             << std::hex
             << static_cast<unsigned long>(hr)
             << L"\n";
+
+        renderer->Release();
+        graph->Release();
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -288,6 +387,10 @@ bool run_capture_graph(
     if (FAILED(hr) || !control) {
         renderer->Release();
         graph->Release();
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -299,9 +402,14 @@ bool run_capture_graph(
             << std::hex
             << static_cast<unsigned long>(hr)
             << L"\n";
+
         control->Release();
         renderer->Release();
         graph->Release();
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -312,15 +420,21 @@ bool run_capture_graph(
         &state
     );
 
-    if (FAILED(hr)) {
+    if (hr != S_OK &&
+        hr != VFW_S_CANT_CUE) {
         std::wcerr
-            << L"Paused live graph did not settle: 0x"
+            << L"Paused live graph failed state check: 0x"
             << std::hex
             << static_cast<unsigned long>(hr)
             << L"\n";
+
         control->Release();
         renderer->Release();
         graph->Release();
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -332,9 +446,14 @@ bool run_capture_graph(
             << std::hex
             << static_cast<unsigned long>(hr)
             << L"\n";
+
         control->Release();
         renderer->Release();
         graph->Release();
+        free_media_type(*selected_type);
+        CoTaskMemFree(selected_type);
+        config->Release();
+        source_pin->Release();
         return false;
     }
 
@@ -345,11 +464,16 @@ bool run_capture_graph(
     control->Stop();
 
     std::wcout
-        << L"FreeCam DirectShow graph ran successfully.\n";
+        << L"FreeCam WebRTC-style DirectShow graph ran successfully.\n";
 
     control->Release();
     renderer->Release();
     graph->Release();
+
+    free_media_type(*selected_type);
+    CoTaskMemFree(selected_type);
+    config->Release();
+    source_pin->Release();
 
     return true;
 }
