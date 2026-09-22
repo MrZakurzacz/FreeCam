@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Unregistering FreeCam Camera...
-%SystemRoot%\System32\regsvr32.exe /s /u "%~dp0FreeCamVirtualCamera.dll"
+start /wait "" "%SystemRoot%\System32\regsvr32.exe" /s /u "%~dp0FreeCamVirtualCamera.dll"
 
 if %errorlevel% neq 0 (
     echo Unregistration failed with error %errorlevel%.
