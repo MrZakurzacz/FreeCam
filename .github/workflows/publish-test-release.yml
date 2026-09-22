@@ -6,11 +6,11 @@ on:
       tag:
         description: "Release tag"
         required: true
-        default: "v0.0.1-test.1"
+        default: "v0.0.1-test.2"
       source_ref:
         description: "Branch or commit to build"
         required: true
-        default: "feature/m0-h264-preview"
+        default: "feature/m0-low-latency-preview"
   push:
     branches: [main]
     paths:
@@ -23,8 +23,8 @@ jobs:
   publish:
     runs-on: windows-2022
     env:
-      DEFAULT_TAG: v0.0.1-test.1
-      DEFAULT_SOURCE_REF: feature/m0-h264-preview
+      DEFAULT_TAG: v0.0.1-test.2
+      DEFAULT_SOURCE_REF: feature/m0-low-latency-preview
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -61,16 +61,14 @@ jobs:
         shell: pwsh
         run: |
           $notes = @"
-          FreeCam M0 test build.
+          FreeCam M0 test.2 build.
 
-          Includes:
-          - Windows 10 / Windows 11 receiver
-          - TCP control handshake
-          - UDP H.264 receive/reassembly
-          - Media Foundation H.264 decode
-          - Win32 live preview window
+          Changes since test.1:
+          - H.264 decoder low-latency mode
+          - preview keeps the last frame painted instead of clearing to black between updates
+          - intended to reduce the ~1.2 s live-preview delay seen in the first hardware test
 
-          This is a development prerelease, not a finished virtual webcam.
+          Still a development prerelease, not a finished virtual webcam.
           "@
 
           gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
