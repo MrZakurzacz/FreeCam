@@ -99,8 +99,6 @@ struct FormatDescriptor {
     bool rgb;
 };
 
-constexpr LONG kRgb32FrameBytes =
-    kWidth * kHeight * 4;
 constexpr LONG kYuy2FrameBytes =
     kWidth * kHeight * 2;
 constexpr LONG kYuv420FrameBytes =
