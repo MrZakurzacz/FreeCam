@@ -1,0 +1,25 @@
+# macOS / Xcode
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.build/
+
+# Windows / Visual Studio
+.vs/
+Debug/
+Release/
+x64/
+x86/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# CMake
+build/
+cmake-build-*/
+
+# General
+*.log
+*.tmp
