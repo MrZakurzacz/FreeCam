@@ -80,7 +80,7 @@ void PreviewWindow::run() {
     window_class.style = CS_HREDRAW | CS_VREDRAW;
     window_class.lpfnWndProc = &PreviewWindow::windowProc;
     window_class.hInstance = instance;
-    window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    window_class.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
     window_class.hbrBackground =
         static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     window_class.lpszClassName = kWindowClassName;
