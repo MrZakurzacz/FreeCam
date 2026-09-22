@@ -34,6 +34,7 @@ target_link_libraries(FreeCamReceiver PRIVATE
 
 add_library(FreeCamVirtualCamera SHARED
     virtualcam/VirtualCamera.cpp
+    virtualcam/FreeCamVirtualCamera.def
     common/SharedFrameProtocol.hpp
 )
 
