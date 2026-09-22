@@ -25,9 +25,37 @@ jobs:
       - name: Build
         run: cmake --build windows/build --config Release
 
-      - name: Upload Windows receiver
+      - name: Register virtual camera
+        shell: pwsh
+        run: |
+          & "$env:SystemRoot\System32\regsvr32.exe" /s "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
+          if ($LASTEXITCODE -ne 0) {
+            throw "regsvr32 failed with exit code $LASTEXITCODE"
+          }
+
+      - name: Verify virtual camera enumeration
+        run: windows\build\Release\FreeCamCameraProbe.exe
+
+      - name: Unregister virtual camera
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "windows\build\Release\FreeCamVirtualCamera.dll") {
+            & "$env:SystemRoot\System32\regsvr32.exe" /s /u "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
+          }
+
+      - name: Stage Windows test package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path windows/dist | Out-Null
+          Copy-Item windows/build/Release/FreeCamReceiver.exe windows/dist/
+          Copy-Item windows/build/Release/FreeCamVirtualCamera.dll windows/dist/
+          Copy-Item windows/virtualcam/install-camera.cmd windows/dist/
+          Copy-Item windows/virtualcam/uninstall-camera.cmd windows/dist/
+
+      - name: Upload Windows test package
         uses: actions/upload-artifact@v4
         with:
-          name: FreeCamReceiver-windows-x64
-          path: windows/build/Release/FreeCamReceiver.exe
+          name: FreeCam-windows-x64
+          path: windows/dist/*
           retention-days: 14
