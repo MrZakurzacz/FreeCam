@@ -6,7 +6,7 @@ on:
       tag:
         description: "Release tag"
         required: true
-        default: "v0.0.1-test.4"
+        default: "v0.0.1-test.5"
       source_ref:
         description: "Branch or commit to build"
         required: true
@@ -23,7 +23,7 @@ jobs:
   publish:
     runs-on: windows-2022
     env:
-      DEFAULT_TAG: v0.0.1-test.4
+      DEFAULT_TAG: v0.0.1-test.5
       DEFAULT_SOURCE_REF: feature/m1-virtual-camera
       GH_TOKEN: ${{ github.token }}
 
@@ -79,9 +79,11 @@ jobs:
           Copy-Item windows/build/Release/FreeCamVirtualCamera.dll dist/FreeCam/
           Copy-Item windows/virtualcam/install-camera.cmd dist/FreeCam/
           Copy-Item windows/virtualcam/uninstall-camera.cmd dist/FreeCam/
+          Copy-Item windows/virtualcam/clear-camera-log.cmd dist/FreeCam/
+          Copy-Item windows/virtualcam/open-camera-log.cmd dist/FreeCam/
 
           @"
-          FreeCam test.4
+          FreeCam test.5
 
           1. Keep all files together in this folder.
           2. Right-click install-camera.cmd and choose Run as administrator.
@@ -89,6 +91,11 @@ jobs:
           4. Connect FreeCamIP on the iPhone and start the camera.
           5. Restart OBS, Discord, your browser, or other camera app if it was already open.
           6. Select "FreeCam Camera" as the video device.
+
+          Diagnostics:
+          - Run clear-camera-log.cmd before a test.
+          - Reproduce the failure in Firefox or Discord.
+          - Run open-camera-log.cmd and copy the log contents.
 
           Do not move or delete FreeCamVirtualCamera.dll while the camera is registered.
           Run uninstall-camera.cmd as administrator before deleting or moving this folder.
@@ -100,14 +107,14 @@ jobs:
         shell: pwsh
         run: |
           $notes = @"
-          FreeCam test.4 — browser/Discord compatibility build.
+          FreeCam test.5 — traced WebRTC/Discord compatibility build.
 
-          Changes since test.3:
-          - virtual camera now exposes NV12, I420, YUY2 and RGB32
-          - NV12 is the default negotiated format
-          - live DirectShow source now reports VFW_S_CANT_CUE while paused, as required for capture devices
-          - CI now builds and runs a real DirectShow capture graph
-          - CI verifies every advertised capture format
+          Changes since test.4:
+          - virtual-camera DLL now logs capture startup calls and HRESULTs to %TEMP%\FreeCamVirtualCamera.log
+          - package includes clear-camera-log.cmd and open-camera-log.cmd
+          - CI now explicitly selects I420 with IAMStreamConfig::SetFormat
+          - CI uses ConnectDirect, matching the basic Windows WebRTC capture path
+          - the WebRTC-style I420 graph passes Pause/Run and sample delivery
 
           Usage:
           1. Extract the ZIP and keep the files together.
@@ -117,7 +124,7 @@ jobs:
 
           This is still a development prerelease. The DirectShow camera is currently x64 only.
 
-          test.4 specifically targets apps that rejected the RGB32-only test.3 camera, including Firefox/WebRTC and Discord.
+          This build is primarily diagnostic. If Firefox or Discord still fails, clear the camera log, reproduce once, then send the contents of %TEMP%\FreeCamVirtualCamera.log.
           "@
 
           gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
