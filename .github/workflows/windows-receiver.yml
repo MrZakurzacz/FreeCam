@@ -1,0 +1,26 @@
+name: Windows receiver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-receiver.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows-receiver.yml"
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S windows -B windows/build -A x64
+
+      - name: Build
+        run: cmake --build windows/build --config Release
