@@ -1,6 +1,3 @@
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-
 #include <windows.h>
 #include <dshow.h>
 #include <ks.h>
@@ -274,7 +271,7 @@ public:
         make_rgb32_media_type(&media_type_);
     }
 
-    ~MediaTypeEnumerator() override {
+    ~MediaTypeEnumerator() {
         free_media_type(media_type_);
     }
 
@@ -402,7 +399,7 @@ public:
         std::memset(&connection_type_, 0, sizeof(connection_type_));
     }
 
-    ~FreeCamPin() override {
+    ~FreeCamPin() {
         stop_streaming();
         disconnect_internal();
     }
@@ -426,7 +423,7 @@ public:
     ) override {
         UNREFERENCED_PARAMETER(connector);
         UNREFERENCED_PARAMETER(media_type);
-        return VFW_E_UNEXPECTED;
+        return E_UNEXPECTED;
     }
 
     HRESULT STDMETHODCALLTYPE Disconnect() override {
@@ -818,7 +815,7 @@ private:
             selected->Release();
             return FAILED(hr)
                 ? hr
-                : VFW_E_BUFFER_TOO_SMALL;
+                : E_FAIL;
         }
 
         hr = input->NotifyAllocator(selected, FALSE);
@@ -897,12 +894,12 @@ private:
 
                         sample->SetActualDataLength(kFrameBytes);
 
-                        const REFERENCE_TIME start =
+                        REFERENCE_TIME start =
                             static_cast<REFERENCE_TIME>(
                                 frame_number
                             ) * kFrameDuration;
 
-                        const REFERENCE_TIME end =
+                        REFERENCE_TIME end =
                             start + kFrameDuration;
 
                         sample->SetTime(&start, &end);
@@ -959,7 +956,7 @@ class PinEnumerator final : public IEnumPins {
 public:
     explicit PinEnumerator(FreeCamFilter* filter);
 
-    ~PinEnumerator() override;
+    ~PinEnumerator();
 
     HRESULT STDMETHODCALLTYPE QueryInterface(
         REFIID riid,
@@ -997,7 +994,7 @@ public:
         name_[0] = L'\0';
     }
 
-    ~FreeCamFilter() override {
+    ~FreeCamFilter() {
         pin_.stop_streaming();
 
         if (clock_) {
@@ -1827,8 +1824,7 @@ extern "C" BOOL WINAPI DllMain(
     return TRUE;
 }
 
-extern "C" __declspec(dllexport)
-HRESULT WINAPI DllGetClassObject(
+STDAPI DllGetClassObject(
     REFCLSID class_id,
     REFIID riid,
     void** object
@@ -1856,8 +1852,7 @@ HRESULT WINAPI DllGetClassObject(
     return hr;
 }
 
-extern "C" __declspec(dllexport)
-HRESULT WINAPI DllCanUnloadNow() {
+STDAPI DllCanUnloadNow() {
     return
         g_object_count.load() == 0 &&
         g_server_locks.load() == 0
@@ -1865,8 +1860,7 @@ HRESULT WINAPI DllCanUnloadNow() {
             : S_FALSE;
 }
 
-extern "C" __declspec(dllexport)
-HRESULT WINAPI DllRegisterServer() {
+STDAPI DllRegisterServer() {
     HRESULT init = CoInitializeEx(
         nullptr,
         COINIT_MULTITHREADED
@@ -1901,8 +1895,7 @@ HRESULT WINAPI DllRegisterServer() {
     return hr;
 }
 
-extern "C" __declspec(dllexport)
-HRESULT WINAPI DllUnregisterServer() {
+STDAPI DllUnregisterServer() {
     HRESULT init = CoInitializeEx(
         nullptr,
         COINIT_MULTITHREADED
