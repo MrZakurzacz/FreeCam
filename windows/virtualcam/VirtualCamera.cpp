@@ -276,6 +276,32 @@ const FormatDescriptor kFormats[] = {
     }
 };
 
+std::wstring subtype_name(
+    const GUID& subtype
+) {
+    if (subtype == MEDIASUBTYPE_NV12) {
+        return L"NV12";
+    }
+    if (subtype == kMediaSubtypeI420) {
+        return L"I420";
+    }
+    if (subtype == MEDIASUBTYPE_YUY2) {
+        return L"YUY2";
+    }
+    if (subtype == MEDIASUBTYPE_RGB32) {
+        return L"RGB32";
+    }
+
+    wchar_t guid[64]{};
+    StringFromGUID2(
+        subtype,
+        guid,
+        static_cast<int>(std::size(guid))
+    );
+
+    return guid;
+}
+
 const FormatDescriptor* find_format(
     const AM_MEDIA_TYPE* mt
 ) {
