@@ -10,7 +10,7 @@ if %errorlevel% neq 0 (
 )
 
 echo Registering FreeCam Camera...
-%SystemRoot%\System32\regsvr32.exe /s "%~dp0FreeCamVirtualCamera.dll"
+start /wait "" "%SystemRoot%\System32\regsvr32.exe" /s "%~dp0FreeCamVirtualCamera.dll"
 
 if %errorlevel% neq 0 (
     echo Registration failed with error %errorlevel%.
