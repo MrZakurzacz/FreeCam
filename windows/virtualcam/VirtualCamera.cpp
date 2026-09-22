@@ -15,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <new>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -35,6 +36,141 @@ const CLSID CLSID_FreeCamVirtualCamera = {
 HMODULE g_module = nullptr;
 std::atomic_long g_object_count{0};
 std::atomic_long g_server_locks{0};
+
+std::mutex g_trace_mutex;
+std::atomic_uint64_t g_sample_counter{0};
+
+std::wstring trace_path() {
+    wchar_t temp[MAX_PATH]{};
+
+    const DWORD length = GetTempPathW(
+        MAX_PATH,
+        temp
+    );
+
+    if (length == 0 ||
+        length >= MAX_PATH) {
+        return L"FreeCamVirtualCamera.log";
+    }
+
+    std::wstring path(temp);
+    path += L"FreeCamVirtualCamera.log";
+    return path;
+}
+
+std::wstring process_name() {
+    wchar_t path[MAX_PATH]{};
+
+    if (!GetModuleFileNameW(
+            nullptr,
+            path,
+            MAX_PATH
+        )) {
+        return L"unknown.exe";
+    }
+
+    const wchar_t* last =
+        wcsrchr(path, L'\\');
+
+    return last ? last + 1 : path;
+}
+
+void trace(
+    const std::wstring& message
+) {
+    std::lock_guard lock(g_trace_mutex);
+
+    const auto path = trace_path();
+
+    HANDLE file = CreateFileW(
+        path.c_str(),
+        FILE_APPEND_DATA,
+        FILE_SHARE_READ |
+            FILE_SHARE_WRITE |
+            FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_ALWAYS,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+
+    if (file == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    SYSTEMTIME time{};
+    GetLocalTime(&time);
+
+    std::wstringstream line;
+
+    line
+        << L"["
+        << time.wHour << L":"
+        << time.wMinute << L":"
+        << time.wSecond << L"."
+        << time.wMilliseconds
+        << L"] pid="
+        << GetCurrentProcessId()
+        << L" "
+        << process_name()
+        << L" "
+        << message
+        << L"\r\n";
+
+    const auto text = line.str();
+
+    int utf8_length = WideCharToMultiByte(
+        CP_UTF8,
+        0,
+        text.c_str(),
+        static_cast<int>(text.size()),
+        nullptr,
+        0,
+        nullptr,
+        nullptr
+    );
+
+    if (utf8_length > 0) {
+        std::string utf8(
+            static_cast<std::size_t>(utf8_length),
+            '\0'
+        );
+
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            text.c_str(),
+            static_cast<int>(text.size()),
+            utf8.data(),
+            utf8_length,
+            nullptr,
+            nullptr
+        );
+
+        DWORD written = 0;
+
+        WriteFile(
+            file,
+            utf8.data(),
+            static_cast<DWORD>(utf8.size()),
+            &written,
+            nullptr
+        );
+    }
+
+    CloseHandle(file);
+}
+
+std::wstring hr_text(
+    HRESULT hr
+) {
+    std::wstringstream value;
+    value
+        << L"0x"
+        << std::hex
+        << static_cast<unsigned long>(hr);
+    return value.str();
+}
 
 const GUID kMediaSubtypeI420 = {
     0x30323449, 0x0000, 0x0010,
@@ -902,6 +1038,7 @@ public:
     HRESULT STDMETHODCALLTYPE SetFormat(
         AM_MEDIA_TYPE* media_type
     ) override {
+        trace(L"IAMStreamConfig::SetFormat");
         if (!media_type) {
             return E_POINTER;
         }
@@ -920,6 +1057,12 @@ public:
         }
 
         preferred_format_ = descriptor->format;
+
+        trace(
+            L"SetFormat accepted subtype=" +
+            subtype_name(media_type->subtype)
+        );
+
         return S_OK;
     }
 
@@ -961,6 +1104,7 @@ public:
         int* count,
         int* size
     ) override {
+        trace(L"IAMStreamConfig::GetNumberOfCapabilities");
         if (!count || !size) {
             return E_POINTER;
         }
@@ -977,6 +1121,10 @@ public:
         AM_MEDIA_TYPE** media_type,
         BYTE* caps
     ) override {
+        trace(
+            L"IAMStreamConfig::GetStreamCaps index=" +
+            std::to_wstring(index)
+        );
         if (!media_type || !caps) {
             return E_POINTER;
         }
@@ -1296,7 +1444,27 @@ private:
                             frame_number == 0
                         );
 
-                        input->Receive(sample);
+                        const HRESULT receive_hr =
+                            input->Receive(sample);
+
+                        const auto sample_index =
+                            ++g_sample_counter;
+
+                        if (sample_index <= 5 ||
+                            FAILED(receive_hr)) {
+                            trace(
+                                L"sample Receive #" +
+                                std::to_wstring(
+                                    sample_index
+                                ) +
+                                L"=" +
+                                hr_text(receive_hr) +
+                                L" subtype=" +
+                                subtype_name(
+                                    connection_type_.subtype
+                                )
+                            );
+                        }
                     }
 
                     sample->Release();
@@ -1451,6 +1619,7 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Stop() override {
+        trace(L"IBaseFilter::Stop");
         std::lock_guard lock(state_mutex_);
         pin_.stop_streaming();
         state_ = State_Stopped;
@@ -1458,6 +1627,7 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE Pause() override {
+        trace(L"IBaseFilter::Pause");
         std::lock_guard lock(state_mutex_);
         state_ = State_Paused;
         return S_OK;
@@ -1466,6 +1636,10 @@ public:
     HRESULT STDMETHODCALLTYPE Run(
         REFERENCE_TIME start
     ) override {
+        trace(
+            L"IBaseFilter::Run start=" +
+            std::to_wstring(start)
+        );
         UNREFERENCED_PARAMETER(start);
 
         std::lock_guard lock(state_mutex_);
@@ -1696,6 +1870,13 @@ HRESULT FreeCamPin::Connect(
     IPin* receive_pin,
     const AM_MEDIA_TYPE* requested_type
 ) {
+    trace(
+        std::wstring(L"IPin::Connect requested=") +
+        (requested_type
+            ? subtype_name(requested_type->subtype)
+            : L"<null>")
+    );
+
     if (!receive_pin) {
         return E_POINTER;
     }
@@ -1739,6 +1920,13 @@ HRESULT FreeCamPin::Connect(
     const HRESULT accept =
         receive_pin->QueryAccept(&type);
 
+    trace(
+        L"downstream QueryAccept=" +
+        hr_text(accept) +
+        L" subtype=" +
+        subtype_name(type.subtype)
+    );
+
     if (accept != S_OK) {
         free_media_type(type);
         return VFW_E_TYPE_NOT_ACCEPTED;
@@ -1747,6 +1935,11 @@ HRESULT FreeCamPin::Connect(
     hr = receive_pin->ReceiveConnection(
         this,
         &type
+    );
+
+    trace(
+        L"downstream ReceiveConnection=" +
+        hr_text(hr)
     );
 
     if (FAILED(hr)) {
@@ -1758,6 +1951,11 @@ HRESULT FreeCamPin::Connect(
     hr = receive_pin->QueryInterface(
         IID_IMemInputPin,
         reinterpret_cast<void**>(&input)
+    );
+
+    trace(
+        L"downstream IMemInputPin QI=" +
+        hr_text(hr)
     );
 
     if (FAILED(hr)) {
@@ -1783,6 +1981,15 @@ HRESULT FreeCamPin::Connect(
         &allocator
     );
 
+    trace(
+        L"allocator negotiation=" +
+        hr_text(hr) +
+        L" bytes=" +
+        std::to_wstring(
+            connected_format->sample_bytes
+        )
+    );
+
     if (FAILED(hr)) {
         input->Release();
         receive_pin->Disconnect();
@@ -1798,10 +2005,16 @@ HRESULT FreeCamPin::Connect(
     preferred_format_ =
         connected_format->format;
 
+    trace(
+        L"IPin::Connect success subtype=" +
+        subtype_name(connection_type_.subtype)
+    );
+
     return S_OK;
 }
 
 HRESULT FreeCamPin::start_streaming() {
+    trace(L"start_streaming");
     std::lock_guard lock(connection_mutex_);
 
     if (!connected_pin_ ||
@@ -1815,6 +2028,12 @@ HRESULT FreeCamPin::start_streaming() {
     }
 
     const HRESULT hr = allocator_->Commit();
+
+    trace(
+        L"allocator Commit=" +
+        hr_text(hr)
+    );
+
     if (FAILED(hr)) {
         return hr;
     }
@@ -2021,6 +2240,8 @@ public:
         if (outer) {
             return CLASS_E_NOAGGREGATION;
         }
+
+        trace(L"IClassFactory::CreateInstance");
 
         auto* filter =
             new (std::nothrow) FreeCamFilter();
@@ -2259,6 +2480,8 @@ STDAPI DllGetClassObject(
     REFIID riid,
     void** object
 ) {
+    trace(L"DllGetClassObject");
+
     if (!object) {
         return E_POINTER;
     }
