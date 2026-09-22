@@ -1,6 +1,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include "video_receiver.h"
+
 #include <array>
 #include <atomic>
 #include <csignal>
@@ -11,7 +13,6 @@
 namespace {
 
 constexpr std::uint16_t kControlPort = 47820;
-constexpr std::uint16_t kVideoPort = 47821;
 constexpr std::size_t kReceiveBufferSize = 4096;
 
 std::atomic_bool g_running = true;
@@ -114,7 +115,7 @@ void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
 
             const std::string response =
                 "{\"type\":\"hello_ack\",\"protocol\":0,\"videoPort\":" +
-                std::to_string(kVideoPort) +
+                std::to_string(VideoReceiver::kVideoPort) +
                 "}\n";
 
             if (!send_all(client_socket, response)) {
@@ -140,10 +141,17 @@ int main() {
         return 1;
     }
 
+    VideoReceiver video_receiver;
+    if (!video_receiver.start()) {
+        WSACleanup();
+        return 1;
+    }
+
     const SOCKET listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listen_socket == INVALID_SOCKET) {
         std::cerr << "socket() failed with WSA error "
                   << WSAGetLastError() << "\n";
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
@@ -161,6 +169,7 @@ int main() {
         std::cerr << "bind() failed with WSA error "
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
@@ -169,11 +178,12 @@ int main() {
         std::cerr << "listen() failed with WSA error "
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
 
-    std::cout << "FreeCam Receiver control server\n"
+    std::cout << "FreeCam Receiver\n"
               << "Listening on TCP port " << kControlPort << "\n"
               << "Press Ctrl+C to stop.\n";
 
@@ -200,6 +210,7 @@ int main() {
     }
 
     closesocket(listen_socket);
+    video_receiver.stop();
     WSACleanup();
     return 0;
 }
