@@ -1,6 +1,11 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include <mfapi.h>
+#include <objbase.h>
+
+#include "H264Decoder.hpp"
+#include "PreviewWindow.hpp"
 #include "VideoReceiver.hpp"
 
 #include <array>
@@ -8,6 +13,7 @@
 #include <csignal>
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 
 namespace {
@@ -51,7 +57,10 @@ bool looks_like_hello(const std::string& line) {
            line.find("\"protocol\"") != std::string::npos;
 }
 
-void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
+void handle_client(
+    SOCKET client_socket,
+    const sockaddr_in& client_address
+) {
     char address_buffer[INET_ADDRSTRLEN] = {};
     inet_ntop(
         AF_INET,
@@ -87,7 +96,10 @@ void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
             break;
         }
 
-        pending.append(buffer.data(), static_cast<std::size_t>(received));
+        pending.append(
+            buffer.data(),
+            static_cast<std::size_t>(received)
+        );
 
         while (true) {
             const auto newline = pending.find('\n');
@@ -110,13 +122,16 @@ void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
 
             if (!looks_like_hello(line)) {
                 const std::string error =
-                    "{\"type\":\"error\",\"code\":\"invalid_message\"}\n";
+                    "{\"type\":\"error\","
+                    "\"code\":\"invalid_message\"}\n";
                 send_all(client_socket, error);
                 continue;
             }
 
             const std::string response =
-                "{\"type\":\"hello_ack\",\"protocol\":0,\"videoPort\":" +
+                "{\"type\":\"hello_ack\","
+                "\"protocol\":0,"
+                "\"videoPort\":" +
                 std::to_string(kVideoPort) +
                 "}\n";
 
@@ -135,40 +150,103 @@ void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
 int main() {
     std::signal(SIGINT, handle_signal);
 
-    WSADATA wsa_data{};
-    const int startup_result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
-    if (startup_result != 0) {
-        std::cerr << "WSAStartup failed with code "
-                  << startup_result << "\n";
+    const HRESULT com_result = CoInitializeEx(
+        nullptr,
+        COINIT_MULTITHREADED
+    );
+
+    if (FAILED(com_result)) {
+        std::cerr << "CoInitializeEx failed: 0x"
+                  << std::hex
+                  << static_cast<unsigned long>(com_result)
+                  << std::dec << "\n";
         return 1;
     }
 
+    const HRESULT mf_result = MFStartup(MF_VERSION);
+    if (FAILED(mf_result)) {
+        std::cerr << "MFStartup failed: 0x"
+                  << std::hex
+                  << static_cast<unsigned long>(mf_result)
+                  << std::dec << "\n";
+        CoUninitialize();
+        return 1;
+    }
+
+    WSADATA wsa_data{};
+    const int startup_result = WSAStartup(
+        MAKEWORD(2, 2),
+        &wsa_data
+    );
+
+    if (startup_result != 0) {
+        std::cerr << "WSAStartup failed with code "
+                  << startup_result << "\n";
+        MFShutdown();
+        CoUninitialize();
+        return 1;
+    }
+
+    PreviewWindow preview;
+    if (!preview.start()) {
+        std::cerr << "Could not create preview window.\n";
+        WSACleanup();
+        MFShutdown();
+        CoUninitialize();
+        return 1;
+    }
+
+    auto decoder = std::make_shared<H264Decoder>(
+        [&preview](DecodedFrame&& frame) {
+            preview.present(std::move(frame));
+        }
+    );
+
     VideoReceiver video_receiver(
         kVideoPort,
-        [](EncodedFrame&& frame) {
+        [decoder](EncodedFrame&& frame) {
             const auto count = ++g_received_frames;
 
-            std::cout
-                << "VIDEO <= frame=" << frame.frame_id
-                << " bytes=" << frame.data.size()
-                << " keyframe=" << (frame.keyframe ? "yes" : "no")
-                << " timestamp_us=" << frame.timestamp_us
-                << " total=" << count
-                << "\n";
+            if (count == 1 || count % 30 == 0) {
+                std::cout
+                    << "VIDEO <= frame=" << frame.frame_id
+                    << " bytes=" << frame.data.size()
+                    << " keyframe="
+                    << (frame.keyframe ? "yes" : "no")
+                    << " total=" << count
+                    << "\n";
+            }
+
+            if (!decoder->decode(frame)) {
+                std::cerr
+                    << "Could not decode H.264 frame "
+                    << frame.frame_id << "\n";
+            }
         }
     );
 
     if (!video_receiver.start()) {
+        preview.stop();
         WSACleanup();
+        MFShutdown();
+        CoUninitialize();
         return 1;
     }
 
-    const SOCKET listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    const SOCKET listen_socket = socket(
+        AF_INET,
+        SOCK_STREAM,
+        IPPROTO_TCP
+    );
+
     if (listen_socket == INVALID_SOCKET) {
         std::cerr << "socket() failed with WSA error "
                   << WSAGetLastError() << "\n";
         video_receiver.stop();
+        preview.stop();
         WSACleanup();
+        MFShutdown();
+        CoUninitialize();
         return 1;
     }
 
@@ -186,7 +264,10 @@ int main() {
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
         video_receiver.stop();
+        preview.stop();
         WSACleanup();
+        MFShutdown();
+        CoUninitialize();
         return 1;
     }
 
@@ -195,18 +276,23 @@ int main() {
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
         video_receiver.stop();
+        preview.stop();
         WSACleanup();
+        MFShutdown();
+        CoUninitialize();
         return 1;
     }
 
     std::cout << "FreeCam Receiver\n"
               << "Control: TCP " << kControlPort << "\n"
               << "Video:   UDP " << kVideoPort << "\n"
+              << "Preview window is ready.\n"
               << "Press Ctrl+C to stop.\n";
 
     while (g_running) {
         sockaddr_in client_address{};
-        int client_address_size = sizeof(client_address);
+        int client_address_size =
+            sizeof(client_address);
 
         const SOCKET client_socket = accept(
             listen_socket,
@@ -228,6 +314,10 @@ int main() {
 
     closesocket(listen_socket);
     video_receiver.stop();
+    decoder.reset();
+    preview.stop();
     WSACleanup();
+    MFShutdown();
+    CoUninitialize();
     return 0;
 }
