@@ -56,3 +56,21 @@ set_target_properties(FreeCamVirtualCamera PROPERTIES
     PREFIX ""
     OUTPUT_NAME "FreeCamVirtualCamera"
 )
+
+
+add_executable(FreeCamCameraProbe
+    virtualcam/CameraProbe.cpp
+)
+
+target_compile_features(FreeCamCameraProbe PRIVATE cxx_std_20)
+
+target_compile_definitions(FreeCamCameraProbe PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
+target_link_libraries(FreeCamCameraProbe PRIVATE
+    ole32
+    oleaut32
+    strmiids
+)
