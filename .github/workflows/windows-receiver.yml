@@ -28,9 +28,9 @@ jobs:
       - name: Register virtual camera
         shell: pwsh
         run: |
-          & "$env:SystemRoot\System32\regsvr32.exe" /s "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
-          if ($LASTEXITCODE -ne 0) {
-            throw "regsvr32 failed with exit code $LASTEXITCODE"
+          $process = Start-Process -FilePath "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList @("/s", "$pwd\windows\build\Release\FreeCamVirtualCamera.dll") -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "regsvr32 failed with exit code $($process.ExitCode)"
           }
 
       - name: Verify virtual camera enumeration
@@ -41,7 +41,8 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path "windows\build\Release\FreeCamVirtualCamera.dll") {
-            & "$env:SystemRoot\System32\regsvr32.exe" /s /u "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
+            $process = Start-Process -FilePath "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList @("/s", "/u", "$pwd\windows\build\Release\FreeCamVirtualCamera.dll") -Wait -PassThru
+            Write-Host "Unregister exit code: $($process.ExitCode)"
           }
 
       - name: Stage Windows test package
