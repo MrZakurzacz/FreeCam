@@ -8,6 +8,16 @@
 
 namespace {
 
+const GUID kMediaSubtypeI420 = {
+    0x30323449, 0x0000, 0x0010,
+    {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+};
+
+const CLSID kClsidNullRenderer = {
+    0xc1f400a4, 0x3f08, 0x11d3,
+    {0x9f, 0x0b, 0x00, 0x60, 0x08, 0x03, 0x9e, 0x37}
+};
+
 void free_media_type(AM_MEDIA_TYPE& mt) {
     if (mt.cbFormat != 0) {
         CoTaskMemFree(mt.pbFormat);
@@ -25,7 +35,7 @@ std::wstring subtype_name(const GUID& subtype) {
     if (subtype == MEDIASUBTYPE_NV12) {
         return L"NV12";
     }
-    if (subtype == MEDIASUBTYPE_I420) {
+    if (subtype == kMediaSubtypeI420) {
         return L"I420";
     }
     if (subtype == MEDIASUBTYPE_YUY2) {
@@ -124,7 +134,7 @@ bool verify_capabilities(
 
         has_i420 =
             has_i420 ||
-            media_type->subtype == MEDIASUBTYPE_I420;
+            media_type->subtype == kMediaSubtypeI420;
 
         has_yuy2 =
             has_yuy2 ||
@@ -175,7 +185,7 @@ bool run_capture_graph(
     IBaseFilter* renderer = nullptr;
 
     hr = CoCreateInstance(
-        CLSID_NullRenderer,
+        kClsidNullRenderer,
         nullptr,
         CLSCTX_INPROC_SERVER,
         IID_IBaseFilter,
