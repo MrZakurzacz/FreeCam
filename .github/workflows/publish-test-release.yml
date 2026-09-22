@@ -6,7 +6,7 @@ on:
       tag:
         description: "Release tag"
         required: true
-        default: "v0.0.1-test.3"
+        default: "v0.0.1-test.4"
       source_ref:
         description: "Branch or commit to build"
         required: true
@@ -23,7 +23,7 @@ jobs:
   publish:
     runs-on: windows-2022
     env:
-      DEFAULT_TAG: v0.0.1-test.3
+      DEFAULT_TAG: v0.0.1-test.4
       DEFAULT_SOURCE_REF: feature/m1-virtual-camera
       GH_TOKEN: ${{ github.token }}
 
@@ -81,7 +81,7 @@ jobs:
           Copy-Item windows/virtualcam/uninstall-camera.cmd dist/FreeCam/
 
           @"
-          FreeCam test.3
+          FreeCam test.4
 
           1. Keep all files together in this folder.
           2. Right-click install-camera.cmd and choose Run as administrator.
@@ -100,15 +100,14 @@ jobs:
         shell: pwsh
         run: |
           $notes = @"
-          FreeCam test.3 — first virtual-webcam build.
+          FreeCam test.4 — browser/Discord compatibility build.
 
-          New:
-          - DirectShow capture source registered as **FreeCam Camera**
-          - Windows 10 and Windows 11 x64 target
-          - shared-memory latest-frame bridge from FreeCamReceiver
-          - 1280x720 at 30 fps RGB32 camera output
-          - install/uninstall scripts
-          - CI verifies Windows can register, enumerate, and instantiate the virtual camera
+          Changes since test.3:
+          - virtual camera now exposes NV12, I420, YUY2 and RGB32
+          - NV12 is the default negotiated format
+          - live DirectShow source now reports VFW_S_CANT_CUE while paused, as required for capture devices
+          - CI now builds and runs a real DirectShow capture graph
+          - CI verifies every advertised capture format
 
           Usage:
           1. Extract the ZIP and keep the files together.
@@ -117,6 +116,8 @@ jobs:
           4. Select FreeCam Camera in OBS/Discord/browser.
 
           This is still a development prerelease. The DirectShow camera is currently x64 only.
+
+          test.4 specifically targets apps that rejected the RGB32-only test.3 camera, including Firefox/WebRTC and Discord.
           "@
 
           gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
