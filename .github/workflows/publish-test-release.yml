@@ -6,11 +6,11 @@ on:
       tag:
         description: "Release tag"
         required: true
-        default: "v0.0.1-test.2"
+        default: "v0.0.1-test.3"
       source_ref:
         description: "Branch or commit to build"
         required: true
-        default: "feature/m0-low-latency-preview"
+        default: "feature/m1-virtual-camera"
   push:
     branches: [main]
     paths:
@@ -23,8 +23,8 @@ jobs:
   publish:
     runs-on: windows-2022
     env:
-      DEFAULT_TAG: v0.0.1-test.2
-      DEFAULT_SOURCE_REF: feature/m0-low-latency-preview
+      DEFAULT_TAG: v0.0.1-test.3
+      DEFAULT_SOURCE_REF: feature/m1-virtual-camera
       GH_TOKEN: ${{ github.token }}
 
     steps:
@@ -50,30 +50,78 @@ jobs:
       - name: Build
         run: cmake --build windows/build --config Release
 
+      - name: Register virtual camera smoke test
+        shell: pwsh
+        run: |
+          $dll = "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
+          $process = Start-Process -FilePath "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList @("/s", $dll) -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "regsvr32 failed with exit code $($process.ExitCode)"
+          }
+
+      - name: Verify virtual camera enumeration
+        run: windows\build\Release\FreeCamCameraProbe.exe
+
+      - name: Unregister virtual camera after smoke test
+        if: always()
+        shell: pwsh
+        run: |
+          $dll = "$pwd\windows\build\Release\FreeCamVirtualCamera.dll"
+          if (Test-Path $dll) {
+            Start-Process -FilePath "$env:SystemRoot\System32\regsvr32.exe" -ArgumentList @("/s", "/u", $dll) -Wait | Out-Null
+          }
+
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item windows/build/Release/FreeCamReceiver.exe dist/FreeCamReceiver.exe
-          Compress-Archive -Path dist/FreeCamReceiver.exe -DestinationPath dist/FreeCamReceiver-windows-x64.zip -Force
+          New-Item -ItemType Directory -Force -Path dist/FreeCam | Out-Null
+          Copy-Item windows/build/Release/FreeCamReceiver.exe dist/FreeCam/
+          Copy-Item windows/build/Release/FreeCamVirtualCamera.dll dist/FreeCam/
+          Copy-Item windows/virtualcam/install-camera.cmd dist/FreeCam/
+          Copy-Item windows/virtualcam/uninstall-camera.cmd dist/FreeCam/
+
+          @"
+          FreeCam test.3
+
+          1. Keep all files together in this folder.
+          2. Right-click install-camera.cmd and choose Run as administrator.
+          3. Run FreeCamReceiver.exe.
+          4. Connect FreeCamIP on the iPhone and start the camera.
+          5. Restart OBS, Discord, your browser, or other camera app if it was already open.
+          6. Select "FreeCam Camera" as the video device.
+
+          Do not move or delete FreeCamVirtualCamera.dll while the camera is registered.
+          Run uninstall-camera.cmd as administrator before deleting or moving this folder.
+          "@ | Set-Content -Encoding UTF8 dist/FreeCam/README.txt
+
+          Compress-Archive -Path dist/FreeCam/* -DestinationPath dist/FreeCam-windows-x64.zip -Force
 
       - name: Publish prerelease
         shell: pwsh
         run: |
           $notes = @"
-          FreeCam M0 test.2 build.
+          FreeCam test.3 — first virtual-webcam build.
 
-          Changes since test.1:
-          - H.264 decoder low-latency mode
-          - preview keeps the last frame painted instead of clearing to black between updates
-          - intended to reduce the ~1.2 s live-preview delay seen in the first hardware test
+          New:
+          - DirectShow capture source registered as **FreeCam Camera**
+          - Windows 10 and Windows 11 x64 target
+          - shared-memory latest-frame bridge from FreeCamReceiver
+          - 1280x720 at 30 fps RGB32 camera output
+          - install/uninstall scripts
+          - CI verifies Windows can register, enumerate, and instantiate the virtual camera
 
-          Still a development prerelease, not a finished virtual webcam.
+          Usage:
+          1. Extract the ZIP and keep the files together.
+          2. Run install-camera.cmd as Administrator.
+          3. Run FreeCamReceiver.exe and connect the iPhone.
+          4. Select FreeCam Camera in OBS/Discord/browser.
+
+          This is still a development prerelease. The DirectShow camera is currently x64 only.
           "@
 
           gh release view "$env:RELEASE_TAG" --repo "$env:GITHUB_REPOSITORY" 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload "$env:RELEASE_TAG" dist/FreeCamReceiver-windows-x64.zip --clobber --repo "$env:GITHUB_REPOSITORY"
+            gh release upload "$env:RELEASE_TAG" dist/FreeCam-windows-x64.zip --clobber --repo "$env:GITHUB_REPOSITORY"
           } else {
-            gh release create "$env:RELEASE_TAG" dist/FreeCamReceiver-windows-x64.zip --target "$env:SOURCE_REF" --title "FreeCam $env:RELEASE_TAG" --notes "$notes" --prerelease --repo "$env:GITHUB_REPOSITORY"
+            gh release create "$env:RELEASE_TAG" dist/FreeCam-windows-x64.zip --target "$env:SOURCE_REF" --title "FreeCam $env:RELEASE_TAG" --notes "$notes" --prerelease --repo "$env:GITHUB_REPOSITORY"
           }
