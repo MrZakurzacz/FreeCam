@@ -30,3 +30,28 @@ target_link_libraries(FreeCamReceiver PRIVATE
     user32
     gdi32
 )
+
+
+add_library(FreeCamVirtualCamera SHARED
+    virtualcam/VirtualCamera.cpp
+    common/SharedFrameProtocol.hpp
+)
+
+target_compile_features(FreeCamVirtualCamera PRIVATE cxx_std_20)
+
+target_compile_definitions(FreeCamVirtualCamera PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
+target_link_libraries(FreeCamVirtualCamera PRIVATE
+    ole32
+    oleaut32
+    advapi32
+    strmiids
+)
+
+set_target_properties(FreeCamVirtualCamera PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "FreeCamVirtualCamera"
+)
