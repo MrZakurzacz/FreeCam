@@ -10,6 +10,8 @@ add_executable(FreeCamReceiver
     src/H264Decoder.hpp
     src/PreviewWindow.cpp
     src/PreviewWindow.hpp
+    src/SharedFrameWriter.cpp
+    src/SharedFrameWriter.hpp
 )
 
 target_compile_features(FreeCamReceiver PRIVATE cxx_std_20)
@@ -27,4 +29,48 @@ target_link_libraries(FreeCamReceiver PRIVATE
     wmcodecdspuuid
     user32
     gdi32
+)
+
+
+add_library(FreeCamVirtualCamera SHARED
+    virtualcam/VirtualCamera.cpp
+    virtualcam/FreeCamVirtualCamera.def
+    common/SharedFrameProtocol.hpp
+)
+
+target_compile_features(FreeCamVirtualCamera PRIVATE cxx_std_20)
+
+target_compile_definitions(FreeCamVirtualCamera PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
+target_link_libraries(FreeCamVirtualCamera PRIVATE
+    ole32
+    oleaut32
+    advapi32
+    strmiids
+)
+
+set_target_properties(FreeCamVirtualCamera PROPERTIES
+    PREFIX ""
+    OUTPUT_NAME "FreeCamVirtualCamera"
+)
+
+
+add_executable(FreeCamCameraProbe
+    virtualcam/CameraProbe.cpp
+)
+
+target_compile_features(FreeCamCameraProbe PRIVATE cxx_std_20)
+
+target_compile_definitions(FreeCamCameraProbe PRIVATE
+    WIN32_LEAN_AND_MEAN
+    NOMINMAX
+)
+
+target_link_libraries(FreeCamCameraProbe PRIVATE
+    ole32
+    oleaut32
+    strmiids
 )

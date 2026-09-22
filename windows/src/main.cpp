@@ -6,6 +6,7 @@
 
 #include "H264Decoder.hpp"
 #include "PreviewWindow.hpp"
+#include "SharedFrameWriter.hpp"
 #include "VideoReceiver.hpp"
 
 #include <array>
@@ -187,6 +188,15 @@ int main() {
         return 1;
     }
 
+    SharedFrameWriter shared_frames;
+    if (!shared_frames.initialize()) {
+        std::cerr << "Could not initialize virtual-camera frame buffer.\n";
+        WSACleanup();
+        MFShutdown();
+        CoUninitialize();
+        return 1;
+    }
+
     PreviewWindow preview;
     if (!preview.start()) {
         std::cerr << "Could not create preview window.\n";
@@ -197,7 +207,8 @@ int main() {
     }
 
     auto decoder = std::make_shared<H264Decoder>(
-        [&preview](DecodedFrame&& frame) {
+        [&preview, &shared_frames](DecodedFrame&& frame) {
+            shared_frames.publish(frame);
             preview.present(std::move(frame));
         }
     );
