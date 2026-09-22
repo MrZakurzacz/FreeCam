@@ -4,6 +4,8 @@ project(FreeCamReceiver LANGUAGES CXX)
 
 add_executable(FreeCamReceiver
     src/main.cpp
+    src/video_receiver.cpp
+    src/video_receiver.h
 )
 
 target_compile_features(FreeCamReceiver PRIVATE cxx_std_20)
