@@ -24,3 +24,10 @@ jobs:
 
       - name: Build
         run: cmake --build windows/build --config Release
+
+      - name: Upload Windows receiver
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeCamReceiver-windows-x64
+          path: windows/build/Release/FreeCamReceiver.exe
+          retention-days: 14
