@@ -213,71 +213,102 @@ void PreviewWindow::paint(HWND hwnd) {
     RECT client{};
     GetClientRect(hwnd, &client);
 
-    FillRect(
-        dc,
-        &client,
-        static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH))
-    );
-
     std::lock_guard lock(frame_mutex_);
 
-    if (!bgra_.empty() && width_ > 0 && height_ > 0) {
-        const int client_width =
-            client.right - client.left;
-        const int client_height =
-            client.bottom - client.top;
-
-        const double source_aspect =
-            static_cast<double>(width_) /
-            static_cast<double>(height_);
-
-        int destination_width = client_width;
-        int destination_height =
-            static_cast<int>(
-                destination_width / source_aspect
-            );
-
-        if (destination_height > client_height) {
-            destination_height = client_height;
-            destination_width =
-                static_cast<int>(
-                    destination_height * source_aspect
-                );
-        }
-
-        const int x =
-            (client_width - destination_width) / 2;
-        const int y =
-            (client_height - destination_height) / 2;
-
-        BITMAPINFO info{};
-        info.bmiHeader.biSize =
-            sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth =
-            static_cast<LONG>(width_);
-        info.bmiHeader.biHeight =
-            -static_cast<LONG>(height_);
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-
-        SetStretchBltMode(dc, HALFTONE);
-
-        StretchDIBits(
+    if (bgra_.empty() || width_ == 0 || height_ == 0) {
+        FillRect(
             dc,
-            x,
-            y,
-            destination_width,
-            destination_height,
-            0,
-            0,
-            static_cast<int>(width_),
-            static_cast<int>(height_),
-            bgra_.data(),
-            &info,
-            DIB_RGB_COLORS,
-            SRCCOPY
+            &client,
+            static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH))
         );
+        EndPaint(hwnd, &paint);
+        return;
+    }
+
+    const int client_width =
+        client.right - client.left;
+    const int client_height =
+        client.bottom - client.top;
+
+    const double source_aspect =
+        static_cast<double>(width_) /
+        static_cast<double>(height_);
+
+    int destination_width = client_width;
+    int destination_height =
+        static_cast<int>(
+            destination_width / source_aspect
+        );
+
+    if (destination_height > client_height) {
+        destination_height = client_height;
+        destination_width =
+            static_cast<int>(
+                destination_height * source_aspect
+            );
+    }
+
+    const int x =
+        (client_width - destination_width) / 2;
+    const int y =
+        (client_height - destination_height) / 2;
+
+    BITMAPINFO info{};
+    info.bmiHeader.biSize =
+        sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth =
+        static_cast<LONG>(width_);
+    info.bmiHeader.biHeight =
+        -static_cast<LONG>(height_);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+
+    SetStretchBltMode(dc, HALFTONE);
+
+    StretchDIBits(
+        dc,
+        x,
+        y,
+        destination_width,
+        destination_height,
+        0,
+        0,
+        static_cast<int>(width_),
+        static_cast<int>(height_),
+        bgra_.data(),
+        &info,
+        DIB_RGB_COLORS,
+        SRCCOPY
+    );
+
+    const HBRUSH black =
+        static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+
+    if (y > 0) {
+        RECT top{0, 0, client_width, y};
+        FillRect(dc, &top, black);
+
+        RECT bottom{
+            0,
+            y + destination_height,
+            client_width,
+            client_height
+        };
+        FillRect(dc, &bottom, black);
+    }
+
+    if (x > 0) {
+        RECT left{0, y, x, y + destination_height};
+        FillRect(dc, &left, black);
+
+        RECT right{
+            x + destination_width,
+            y,
+            client_width,
+            y + destination_height
+        };
+        FillRect(dc, &right, black);
     }
 
     EndPaint(hwnd, &paint);

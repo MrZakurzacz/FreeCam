@@ -1,5 +1,6 @@
 #include "H264Decoder.hpp"
 
+#include <codecapi.h>
 #include <mfapi.h>
 #include <mferror.h>
 #include <mfidl.h>
@@ -61,6 +62,14 @@ bool H264Decoder::initialize() {
                   << std::hex << static_cast<unsigned long>(hr)
                   << std::dec << "\n";
         return false;
+    }
+
+    ComPtr<IMFAttributes> decoder_attributes;
+    if (SUCCEEDED(impl_->decoder->GetAttributes(&decoder_attributes))) {
+        decoder_attributes->SetUINT32(
+            CODECAPI_AVLowLatencyMode,
+            TRUE
+        );
     }
 
     ComPtr<IMFMediaType> input_type;
