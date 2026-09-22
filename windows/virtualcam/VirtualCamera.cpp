@@ -24,7 +24,7 @@ namespace {
 constexpr LONG kWidth = 1280;
 constexpr LONG kHeight = 720;
 constexpr LONG kBytesPerPixel = 4;
-constexpr LONG kFrameBytes = kWidth * kHeight * kBytesPerPixel;
+constexpr LONG kRgb32FrameBytes = kWidth * kHeight * kBytesPerPixel;
 constexpr REFERENCE_TIME kFrameDuration = 10'000'000 / 30;
 
 const CLSID CLSID_FreeCamVirtualCamera = {
@@ -84,7 +84,104 @@ HRESULT copy_media_type(
     return S_OK;
 }
 
-HRESULT make_rgb32_media_type(AM_MEDIA_TYPE* mt) {
+enum class OutputFormat {
+    NV12,
+    I420,
+    YUY2,
+    RGB32
+};
+
+struct FormatDescriptor {
+    OutputFormat format;
+    const GUID* subtype;
+    WORD bits_per_pixel;
+    LONG sample_bytes;
+    bool rgb;
+};
+
+constexpr LONG kRgb32FrameBytes =
+    kWidth * kHeight * 4;
+constexpr LONG kYuy2FrameBytes =
+    kWidth * kHeight * 2;
+constexpr LONG kYuv420FrameBytes =
+    kWidth * kHeight * 3 / 2;
+
+const FormatDescriptor kFormats[] = {
+    {
+        OutputFormat::NV12,
+        &MEDIASUBTYPE_NV12,
+        12,
+        kYuv420FrameBytes,
+        false
+    },
+    {
+        OutputFormat::I420,
+        &MEDIASUBTYPE_I420,
+        12,
+        kYuv420FrameBytes,
+        false
+    },
+    {
+        OutputFormat::YUY2,
+        &MEDIASUBTYPE_YUY2,
+        16,
+        kYuy2FrameBytes,
+        false
+    },
+    {
+        OutputFormat::RGB32,
+        &MEDIASUBTYPE_RGB32,
+        32,
+        kRgb32FrameBytes,
+        true
+    }
+};
+
+const FormatDescriptor* find_format(
+    const AM_MEDIA_TYPE* mt
+) {
+    if (!mt ||
+        mt->majortype != MEDIATYPE_Video ||
+        mt->formattype != FORMAT_VideoInfo ||
+        mt->cbFormat < sizeof(VIDEOINFOHEADER) ||
+        !mt->pbFormat) {
+        return nullptr;
+    }
+
+    const auto* vih =
+        reinterpret_cast<const VIDEOINFOHEADER*>(mt->pbFormat);
+
+    if (vih->bmiHeader.biWidth != kWidth ||
+        std::abs(vih->bmiHeader.biHeight) != kHeight) {
+        return nullptr;
+    }
+
+    for (const auto& descriptor : kFormats) {
+        if (mt->subtype == *descriptor.subtype &&
+            vih->bmiHeader.biBitCount ==
+                descriptor.bits_per_pixel) {
+            return &descriptor;
+        }
+    }
+
+    return nullptr;
+}
+
+const FormatDescriptor* find_format(
+    OutputFormat format
+) {
+    for (const auto& descriptor : kFormats) {
+        if (descriptor.format == format) {
+            return &descriptor;
+        }
+    }
+    return nullptr;
+}
+
+HRESULT make_media_type(
+    const FormatDescriptor& descriptor,
+    AM_MEDIA_TYPE* mt
+) {
     if (!mt) {
         return E_POINTER;
     }
@@ -105,15 +202,20 @@ HRESULT make_rgb32_media_type(AM_MEDIA_TYPE* mt) {
     vih->bmiHeader.biWidth = kWidth;
     vih->bmiHeader.biHeight = kHeight;
     vih->bmiHeader.biPlanes = 1;
-    vih->bmiHeader.biBitCount = 32;
-    vih->bmiHeader.biCompression = BI_RGB;
-    vih->bmiHeader.biSizeImage = kFrameBytes;
+    vih->bmiHeader.biBitCount =
+        descriptor.bits_per_pixel;
+    vih->bmiHeader.biCompression =
+        descriptor.rgb
+            ? BI_RGB
+            : descriptor.subtype->Data1;
+    vih->bmiHeader.biSizeImage =
+        descriptor.sample_bytes;
 
     mt->majortype = MEDIATYPE_Video;
-    mt->subtype = MEDIASUBTYPE_RGB32;
+    mt->subtype = *descriptor.subtype;
     mt->bFixedSizeSamples = TRUE;
     mt->bTemporalCompression = FALSE;
-    mt->lSampleSize = kFrameBytes;
+    mt->lSampleSize = descriptor.sample_bytes;
     mt->formattype = FORMAT_VideoInfo;
     mt->pUnk = nullptr;
     mt->cbFormat = sizeof(VIDEOINFOHEADER);
@@ -122,25 +224,240 @@ HRESULT make_rgb32_media_type(AM_MEDIA_TYPE* mt) {
     return S_OK;
 }
 
-bool accepts_rgb32(const AM_MEDIA_TYPE* mt) {
-    if (!mt) {
-        return false;
+std::uint8_t clamp_byte(int value) {
+    return static_cast<std::uint8_t>(
+        std::clamp(value, 0, 255)
+    );
+}
+
+void bgra_to_yuv(
+    const std::uint8_t* pixel,
+    int& y,
+    int& u,
+    int& v
+) {
+    const int b = pixel[0];
+    const int g = pixel[1];
+    const int r = pixel[2];
+
+    y = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+    u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+    v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+
+    y = std::clamp(y, 0, 255);
+    u = std::clamp(u, 0, 255);
+    v = std::clamp(v, 0, 255);
+}
+
+void convert_bgra_to_yuy2(
+    const std::uint8_t* source,
+    std::uint8_t* destination
+) {
+    for (LONG y = 0; y < kHeight; ++y) {
+        const auto* row =
+            source +
+            static_cast<std::size_t>(y) *
+            kWidth *
+            4;
+
+        auto* out =
+            destination +
+            static_cast<std::size_t>(y) *
+            kWidth *
+            2;
+
+        for (LONG x = 0; x < kWidth; x += 2) {
+            int y0, u0, v0;
+            int y1, u1, v1;
+
+            bgra_to_yuv(row + x * 4, y0, u0, v0);
+            bgra_to_yuv(row + (x + 1) * 4, y1, u1, v1);
+
+            out[x * 2 + 0] = clamp_byte(y0);
+            out[x * 2 + 1] =
+                clamp_byte((u0 + u1) / 2);
+            out[x * 2 + 2] = clamp_byte(y1);
+            out[x * 2 + 3] =
+                clamp_byte((v0 + v1) / 2);
+        }
+    }
+}
+
+void convert_bgra_to_nv12(
+    const std::uint8_t* source,
+    std::uint8_t* destination
+) {
+    auto* y_plane = destination;
+    auto* uv_plane =
+        destination +
+        static_cast<std::size_t>(kWidth) *
+        kHeight;
+
+    for (LONG y = 0; y < kHeight; ++y) {
+        const auto* row =
+            source +
+            static_cast<std::size_t>(y) *
+            kWidth *
+            4;
+
+        for (LONG x = 0; x < kWidth; ++x) {
+            int yy, u, v;
+            bgra_to_yuv(row + x * 4, yy, u, v);
+            y_plane[
+                static_cast<std::size_t>(y) *
+                kWidth + x
+            ] = clamp_byte(yy);
+        }
     }
 
-    if (mt->majortype != MEDIATYPE_Video ||
-        mt->subtype != MEDIASUBTYPE_RGB32 ||
-        mt->formattype != FORMAT_VideoInfo ||
-        mt->cbFormat < sizeof(VIDEOINFOHEADER) ||
-        !mt->pbFormat) {
-        return false;
+    for (LONG y = 0; y < kHeight; y += 2) {
+        for (LONG x = 0; x < kWidth; x += 2) {
+            int u_sum = 0;
+            int v_sum = 0;
+
+            for (LONG dy = 0; dy < 2; ++dy) {
+                const auto* row =
+                    source +
+                    static_cast<std::size_t>(y + dy) *
+                    kWidth *
+                    4;
+
+                for (LONG dx = 0; dx < 2; ++dx) {
+                    int yy, u, v;
+                    bgra_to_yuv(
+                        row + (x + dx) * 4,
+                        yy,
+                        u,
+                        v
+                    );
+                    u_sum += u;
+                    v_sum += v;
+                }
+            }
+
+            const std::size_t uv_index =
+                static_cast<std::size_t>(y / 2) *
+                kWidth +
+                x;
+
+            uv_plane[uv_index] =
+                clamp_byte(u_sum / 4);
+            uv_plane[uv_index + 1] =
+                clamp_byte(v_sum / 4);
+        }
+    }
+}
+
+void convert_bgra_to_i420(
+    const std::uint8_t* source,
+    std::uint8_t* destination
+) {
+    auto* y_plane = destination;
+    auto* u_plane =
+        destination +
+        static_cast<std::size_t>(kWidth) *
+        kHeight;
+    auto* v_plane =
+        u_plane +
+        static_cast<std::size_t>(kWidth / 2) *
+        (kHeight / 2);
+
+    for (LONG y = 0; y < kHeight; ++y) {
+        const auto* row =
+            source +
+            static_cast<std::size_t>(y) *
+            kWidth *
+            4;
+
+        for (LONG x = 0; x < kWidth; ++x) {
+            int yy, u, v;
+            bgra_to_yuv(row + x * 4, yy, u, v);
+            y_plane[
+                static_cast<std::size_t>(y) *
+                kWidth + x
+            ] = clamp_byte(yy);
+        }
     }
 
-    const auto* vih =
-        reinterpret_cast<const VIDEOINFOHEADER*>(mt->pbFormat);
+    for (LONG y = 0; y < kHeight; y += 2) {
+        for (LONG x = 0; x < kWidth; x += 2) {
+            int u_sum = 0;
+            int v_sum = 0;
 
-    return vih->bmiHeader.biWidth == kWidth &&
-           std::abs(vih->bmiHeader.biHeight) == kHeight &&
-           vih->bmiHeader.biBitCount == 32;
+            for (LONG dy = 0; dy < 2; ++dy) {
+                const auto* row =
+                    source +
+                    static_cast<std::size_t>(y + dy) *
+                    kWidth *
+                    4;
+
+                for (LONG dx = 0; dx < 2; ++dx) {
+                    int yy, u, v;
+                    bgra_to_yuv(
+                        row + (x + dx) * 4,
+                        yy,
+                        u,
+                        v
+                    );
+                    u_sum += u;
+                    v_sum += v;
+                }
+            }
+
+            const std::size_t chroma_index =
+                static_cast<std::size_t>(y / 2) *
+                (kWidth / 2) +
+                (x / 2);
+
+            u_plane[chroma_index] =
+                clamp_byte(u_sum / 4);
+            v_plane[chroma_index] =
+                clamp_byte(v_sum / 4);
+        }
+    }
+}
+
+bool write_output_frame(
+    OutputFormat format,
+    const std::uint8_t* source,
+    std::uint8_t* destination
+) {
+    switch (format) {
+    case OutputFormat::NV12:
+        convert_bgra_to_nv12(source, destination);
+        return true;
+
+    case OutputFormat::I420:
+        convert_bgra_to_i420(source, destination);
+        return true;
+
+    case OutputFormat::YUY2:
+        convert_bgra_to_yuy2(source, destination);
+        return true;
+
+    case OutputFormat::RGB32:
+        for (LONG y = 0; y < kHeight; ++y) {
+            const auto* source_row =
+                source +
+                static_cast<std::size_t>(
+                    kHeight - 1 - y
+                ) *
+                kWidth *
+                4;
+
+            std::memcpy(
+                destination +
+                    static_cast<std::size_t>(y) *
+                    kWidth *
+                    4,
+                source_row,
+                static_cast<std::size_t>(kWidth) * 4
+            );
+        }
+        return true;
+    }
+
+    return false;
 }
 
 class SharedFrameReader {
@@ -167,8 +484,8 @@ public:
             return false;
         }
 
-        if (output.size() != static_cast<std::size_t>(kFrameBytes)) {
-            output.resize(kFrameBytes);
+        if (output.size() != static_cast<std::size_t>(kRgb32FrameBytes)) {
+            output.resize(kRgb32FrameBytes);
         }
 
         for (int attempt = 0; attempt < 2; ++attempt) {
@@ -196,7 +513,7 @@ public:
                     view_,
                     static_cast<std::uint32_t>(slot)
                 ),
-                kFrameBytes
+                kRgb32FrameBytes
             );
 
             MemoryBarrier();
@@ -268,11 +585,6 @@ class MediaTypeEnumerator final : public IEnumMediaTypes {
 public:
     MediaTypeEnumerator()
         : ref_count_(1) {
-        make_rgb32_media_type(&media_type_);
-    }
-
-    ~MediaTypeEnumerator() {
-        free_media_type(media_type_);
     }
 
     HRESULT STDMETHODCALLTYPE QueryInterface(
@@ -282,12 +594,15 @@ public:
         if (!object) {
             return E_POINTER;
         }
+
         if (riid == IID_IUnknown ||
             riid == IID_IEnumMediaTypes) {
-            *object = static_cast<IEnumMediaTypes*>(this);
+            *object =
+                static_cast<IEnumMediaTypes*>(this);
             AddRef();
             return S_OK;
         }
+
         *object = nullptr;
         return E_NOINTERFACE;
     }
@@ -301,10 +616,12 @@ public:
     ULONG STDMETHODCALLTYPE Release() override {
         const LONG value =
             InterlockedDecrement(&ref_count_);
+
         if (value == 0) {
             delete this;
             return 0;
         }
+
         return static_cast<ULONG>(value);
     }
 
@@ -316,48 +633,64 @@ public:
         if (!media_types) {
             return E_POINTER;
         }
+
         if (count > 1 && !fetched) {
             return E_POINTER;
         }
 
         ULONG produced = 0;
 
-        if (index_ == 0 && count > 0) {
+        while (produced < count &&
+               index_ < std::size(kFormats)) {
             auto* mt = static_cast<AM_MEDIA_TYPE*>(
                 CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE))
             );
+
             if (!mt) {
-                return E_OUTOFMEMORY;
+                break;
             }
 
             const HRESULT hr =
-                copy_media_type(mt, &media_type_);
+                make_media_type(
+                    kFormats[index_],
+                    mt
+                );
+
             if (FAILED(hr)) {
                 CoTaskMemFree(mt);
-                return hr;
+                break;
             }
 
-            media_types[0] = mt;
-            index_ = 1;
-            produced = 1;
+            media_types[produced] = mt;
+            ++produced;
+            ++index_;
         }
 
         if (fetched) {
             *fetched = produced;
         }
 
-        return produced == count ? S_OK : S_FALSE;
+        return produced == count
+            ? S_OK
+            : S_FALSE;
     }
 
-    HRESULT STDMETHODCALLTYPE Skip(ULONG count) override {
-        if (count == 0) {
-            return S_OK;
-        }
-        if (index_ == 0) {
-            index_ = 1;
-            return count == 1 ? S_OK : S_FALSE;
-        }
-        return S_FALSE;
+    HRESULT STDMETHODCALLTYPE Skip(
+        ULONG count
+    ) override {
+        const ULONG remaining =
+            static_cast<ULONG>(
+                std::size(kFormats) - index_
+            );
+
+        const ULONG skipped =
+            std::min(count, remaining);
+
+        index_ += skipped;
+
+        return skipped == count
+            ? S_OK
+            : S_FALSE;
     }
 
     HRESULT STDMETHODCALLTYPE Reset() override {
@@ -374,6 +707,7 @@ public:
 
         auto* enumerator =
             new (std::nothrow) MediaTypeEnumerator();
+
         if (!enumerator) {
             return E_OUTOFMEMORY;
         }
@@ -386,7 +720,6 @@ public:
 private:
     volatile LONG ref_count_;
     ULONG index_ = 0;
-    AM_MEDIA_TYPE media_type_{};
 };
 
 class FreeCamPin final :
@@ -509,7 +842,7 @@ public:
     HRESULT STDMETHODCALLTYPE QueryAccept(
         const AM_MEDIA_TYPE* media_type
     ) override {
-        return accepts_rgb32(media_type)
+        return find_format(media_type)
             ? S_OK
             : S_FALSE;
     }
@@ -570,9 +903,21 @@ public:
             return E_POINTER;
         }
 
-        return accepts_rgb32(media_type)
-            ? S_OK
-            : VFW_E_INVALIDMEDIATYPE;
+        const auto* descriptor =
+            find_format(media_type);
+
+        if (!descriptor) {
+            return VFW_E_INVALIDMEDIATYPE;
+        }
+
+        std::lock_guard lock(connection_mutex_);
+
+        if (connected_pin_) {
+            return VFW_E_NOT_STOPPED;
+        }
+
+        preferred_format_ = descriptor->format;
+        return S_OK;
     }
 
     HRESULT STDMETHODCALLTYPE GetFormat(
@@ -582,14 +927,24 @@ public:
             return E_POINTER;
         }
 
+        const auto* descriptor =
+            find_format(preferred_format_);
+
+        if (!descriptor) {
+            return E_FAIL;
+        }
+
         auto* mt = static_cast<AM_MEDIA_TYPE*>(
             CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE))
         );
+
         if (!mt) {
             return E_OUTOFMEMORY;
         }
 
-        const HRESULT hr = make_rgb32_media_type(mt);
+        const HRESULT hr =
+            make_media_type(*descriptor, mt);
+
         if (FAILED(hr)) {
             CoTaskMemFree(mt);
             return hr;
@@ -607,7 +962,9 @@ public:
             return E_POINTER;
         }
 
-        *count = 1;
+        *count = static_cast<int>(
+            std::size(kFormats)
+        );
         *size = sizeof(VIDEO_STREAM_CONFIG_CAPS);
         return S_OK;
     }
@@ -617,21 +974,48 @@ public:
         AM_MEDIA_TYPE** media_type,
         BYTE* caps
     ) override {
-        if (index != 0) {
-            return S_FALSE;
-        }
         if (!media_type || !caps) {
             return E_POINTER;
         }
 
-        HRESULT hr = GetFormat(media_type);
+        if (index < 0 ||
+            index >= static_cast<int>(
+                std::size(kFormats)
+            )) {
+            return S_FALSE;
+        }
+
+        auto* mt = static_cast<AM_MEDIA_TYPE*>(
+            CoTaskMemAlloc(sizeof(AM_MEDIA_TYPE))
+        );
+
+        if (!mt) {
+            return E_OUTOFMEMORY;
+        }
+
+        const auto& descriptor =
+            kFormats[index];
+
+        HRESULT hr =
+            make_media_type(descriptor, mt);
+
         if (FAILED(hr)) {
+            CoTaskMemFree(mt);
             return hr;
         }
 
+        *media_type = mt;
+
         auto* config =
-            reinterpret_cast<VIDEO_STREAM_CONFIG_CAPS*>(caps);
-        std::memset(config, 0, sizeof(*config));
+            reinterpret_cast<
+                VIDEO_STREAM_CONFIG_CAPS*
+            >(caps);
+
+        std::memset(
+            config,
+            0,
+            sizeof(*config)
+        );
 
         config->guid = FORMAT_VideoInfo;
         config->VideoStandard = AnalogVideo_None;
@@ -647,7 +1031,7 @@ public:
         config->MinFrameInterval = kFrameDuration;
         config->MaxFrameInterval = kFrameDuration;
         config->MinBitsPerSecond =
-            kWidth * kHeight * 32 * 30;
+            descriptor.sample_bytes * 8 * 30;
         config->MaxBitsPerSecond =
             config->MinBitsPerSecond;
 
@@ -752,6 +1136,7 @@ private:
 
     HRESULT negotiate_allocator(
         IMemInputPin* input,
+        LONG sample_bytes,
         IMemAllocator** allocator
     ) {
         if (!input || !allocator) {
@@ -762,7 +1147,7 @@ private:
 
         ALLOCATOR_PROPERTIES requested{};
         requested.cBuffers = 3;
-        requested.cbBuffer = kFrameBytes;
+        requested.cbBuffer = sample_bytes;
         requested.cbAlign = 1;
         requested.cbPrefix = 0;
 
@@ -811,7 +1196,7 @@ private:
         );
 
         if (FAILED(hr) ||
-            actual.cbBuffer < kFrameBytes) {
+            actual.cbBuffer < sample_bytes) {
             selected->Release();
             return FAILED(hr)
                 ? hr
@@ -829,8 +1214,15 @@ private:
     }
 
     void stream_loop() {
+        const auto* descriptor =
+            find_format(&connection_type_);
+
+        if (!descriptor) {
+            return;
+        }
+
         std::vector<std::uint8_t> frame(
-            kFrameBytes,
+            kRgb32FrameBytes,
             0
         );
 
@@ -848,9 +1240,11 @@ private:
                 std::lock_guard lock(connection_mutex_);
                 allocator = allocator_;
                 input = mem_input_;
+
                 if (allocator) {
                     allocator->AddRef();
                 }
+
                 if (input) {
                     input->AddRef();
                 }
@@ -872,38 +1266,29 @@ private:
                     if (SUCCEEDED(
                             sample->GetPointer(&destination)
                         ) &&
-                        sample->GetSize() >= kFrameBytes) {
-                        const std::size_t row_bytes =
-                            kWidth * kBytesPerPixel;
-
-                        for (LONG y = 0; y < kHeight; ++y) {
-                            const auto* source_row =
-                                frame.data() +
-                                static_cast<std::size_t>(
-                                    kHeight - 1 - y
-                                ) * row_bytes;
-
-                            std::memcpy(
-                                destination +
-                                    static_cast<std::size_t>(y) *
-                                    row_bytes,
-                                source_row,
-                                row_bytes
-                            );
-                        }
-
-                        sample->SetActualDataLength(kFrameBytes);
+                        sample->GetSize() >=
+                            descriptor->sample_bytes &&
+                        write_output_frame(
+                            descriptor->format,
+                            frame.data(),
+                            destination
+                        )) {
+                        sample->SetActualDataLength(
+                            descriptor->sample_bytes
+                        );
 
                         REFERENCE_TIME start =
                             static_cast<REFERENCE_TIME>(
                                 frame_number
-                            ) * kFrameDuration;
+                            ) *
+                            kFrameDuration;
 
                         REFERENCE_TIME end =
                             start + kFrameDuration;
 
                         sample->SetTime(&start, &end);
                         sample->SetSyncPoint(TRUE);
+                        sample->SetPreroll(FALSE);
                         sample->SetDiscontinuity(
                             frame_number == 0
                         );
@@ -918,11 +1303,13 @@ private:
             if (input) {
                 input->Release();
             }
+
             if (allocator) {
                 allocator->Release();
             }
 
             ++frame_number;
+
             next += std::chrono::nanoseconds(
                 kFrameDuration * 100
             );
@@ -944,6 +1331,8 @@ private:
     IMemInputPin* mem_input_ = nullptr;
     IMemAllocator* allocator_ = nullptr;
     AM_MEDIA_TYPE connection_type_{};
+    OutputFormat preferred_format_ =
+        OutputFormat::NV12;
 
     std::atomic_bool streaming_{false};
     std::thread stream_thread_;
@@ -1098,6 +1487,11 @@ public:
 
         std::lock_guard lock(state_mutex_);
         *state = state_;
+
+        if (state_ == State_Paused) {
+            return VFW_S_CANT_CUE;
+        }
+
         return S_OK;
     }
 
@@ -1313,7 +1707,7 @@ HRESULT FreeCamPin::Connect(
     HRESULT hr = S_OK;
 
     if (requested_type) {
-        if (!accepts_rgb32(requested_type)) {
+        if (!find_format(requested_type)) {
             return VFW_E_TYPE_NOT_ACCEPTED;
         }
 
@@ -1322,7 +1716,17 @@ HRESULT FreeCamPin::Connect(
             requested_type
         );
     } else {
-        hr = make_rgb32_media_type(&type);
+        const auto* preferred =
+            find_format(preferred_format_);
+
+        if (!preferred) {
+            return E_FAIL;
+        }
+
+        hr = make_media_type(
+            *preferred,
+            &type
+        );
     }
 
     if (FAILED(hr)) {
@@ -1359,9 +1763,20 @@ HRESULT FreeCamPin::Connect(
         return hr;
     }
 
+    const auto* connected_format =
+        find_format(&type);
+
+    if (!connected_format) {
+        input->Release();
+        receive_pin->Disconnect();
+        free_media_type(type);
+        return VFW_E_TYPE_NOT_ACCEPTED;
+    }
+
     IMemAllocator* allocator = nullptr;
     hr = negotiate_allocator(
         input,
+        connected_format->sample_bytes,
         &allocator
     );
 
@@ -1377,6 +1792,8 @@ HRESULT FreeCamPin::Connect(
     mem_input_ = input;
     allocator_ = allocator;
     connection_type_ = type;
+    preferred_format_ =
+        connected_format->format;
 
     return S_OK;
 }
@@ -1745,15 +2162,25 @@ HRESULT register_filter() {
         return hr;
     }
 
-    REGPINTYPES media_type{};
-    media_type.clsMajorType = &MEDIATYPE_Video;
-    media_type.clsMinorType = &MEDIASUBTYPE_RGB32;
+    REGPINTYPES media_types[
+        std::size(kFormats)
+    ]{};
+
+    for (std::size_t index = 0;
+         index < std::size(kFormats);
+         ++index) {
+        media_types[index].clsMajorType =
+            &MEDIATYPE_Video;
+        media_types[index].clsMinorType =
+            kFormats[index].subtype;
+    }
 
     REGFILTERPINS2 pin{};
     pin.dwFlags = REG_PINFLAG_B_OUTPUT;
     pin.cInstances = 1;
-    pin.nMediaTypes = 1;
-    pin.lpMediaType = &media_type;
+    pin.nMediaTypes =
+        static_cast<UINT>(std::size(kFormats));
+    pin.lpMediaType = media_types;
     pin.nMediums = 0;
     pin.lpMedium = nullptr;
     pin.clsPinCategory = &PIN_CATEGORY_CAPTURE;
