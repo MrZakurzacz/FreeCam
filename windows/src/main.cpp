@@ -1,6 +1,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
+#include "VideoReceiver.hpp"
+
 #include <array>
 #include <atomic>
 #include <csignal>
@@ -15,6 +17,7 @@ constexpr std::uint16_t kVideoPort = 47821;
 constexpr std::size_t kReceiveBufferSize = 4096;
 
 std::atomic_bool g_running = true;
+std::atomic_uint64_t g_received_frames = 0;
 
 void handle_signal(int) {
     g_running = false;
@@ -140,10 +143,31 @@ int main() {
         return 1;
     }
 
+    VideoReceiver video_receiver(
+        kVideoPort,
+        [](EncodedFrame&& frame) {
+            const auto count = ++g_received_frames;
+
+            std::cout
+                << "VIDEO <= frame=" << frame.frame_id
+                << " bytes=" << frame.data.size()
+                << " keyframe=" << (frame.keyframe ? "yes" : "no")
+                << " timestamp_us=" << frame.timestamp_us
+                << " total=" << count
+                << "\n";
+        }
+    );
+
+    if (!video_receiver.start()) {
+        WSACleanup();
+        return 1;
+    }
+
     const SOCKET listen_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listen_socket == INVALID_SOCKET) {
         std::cerr << "socket() failed with WSA error "
                   << WSAGetLastError() << "\n";
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
@@ -161,6 +185,7 @@ int main() {
         std::cerr << "bind() failed with WSA error "
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
@@ -169,12 +194,14 @@ int main() {
         std::cerr << "listen() failed with WSA error "
                   << WSAGetLastError() << "\n";
         closesocket(listen_socket);
+        video_receiver.stop();
         WSACleanup();
         return 1;
     }
 
-    std::cout << "FreeCam Receiver control server\n"
-              << "Listening on TCP port " << kControlPort << "\n"
+    std::cout << "FreeCam Receiver\n"
+              << "Control: TCP " << kControlPort << "\n"
+              << "Video:   UDP " << kVideoPort << "\n"
               << "Press Ctrl+C to stop.\n";
 
     while (g_running) {
@@ -200,6 +227,7 @@ int main() {
     }
 
     closesocket(listen_socket);
+    video_receiver.stop();
     WSACleanup();
     return 0;
 }
