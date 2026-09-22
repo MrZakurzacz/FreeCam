@@ -219,7 +219,7 @@ public:
 private:
     bool open() {
         mapping_ = OpenFileMappingW(
-            FILE_MAP_READ,
+            FILE_MAP_READ | FILE_MAP_WRITE,
             FALSE,
             freecam::shared::kMappingName
         );
@@ -230,7 +230,7 @@ private:
 
         view_ = MapViewOfFile(
             mapping_,
-            FILE_MAP_READ,
+            FILE_MAP_READ | FILE_MAP_WRITE,
             0,
             0,
             freecam::shared::kMappingBytes
