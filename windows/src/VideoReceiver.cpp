@@ -1,5 +1,6 @@
 #include "VideoReceiver.hpp"
 
+#include <objbase.h>
 #include <ws2tcpip.h>
 
 #include <algorithm>
@@ -130,6 +131,19 @@ void VideoReceiver::stop() {
 }
 
 void VideoReceiver::run() {
+    const HRESULT com_result = CoInitializeEx(
+        nullptr,
+        COINIT_MULTITHREADED
+    );
+
+    if (FAILED(com_result)) {
+        std::cerr << "CoInitializeEx failed on video thread: 0x"
+                  << std::hex
+                  << static_cast<unsigned long>(com_result)
+                  << std::dec << "\n";
+        return;
+    }
+
     std::unordered_map<std::uint32_t, PartialFrame> frames;
     std::array<std::uint8_t, kMaxDatagramBytes> buffer{};
 
@@ -245,4 +259,6 @@ void VideoReceiver::run() {
             frame_handler_(std::move(complete));
         }
     }
+
+    CoUninitialize();
 }
