@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "windows/**"
+      - "tools/protocol_smoke_test.py"
       - ".github/workflows/windows-receiver.yml"
   pull_request:
     paths:
       - "windows/**"
+      - "tools/protocol_smoke_test.py"
       - ".github/workflows/windows-receiver.yml"
 
 jobs:
@@ -24,6 +26,33 @@ jobs:
 
       - name: Build
         run: cmake --build windows/build --config Release
+
+      - name: Protocol smoke test
+        shell: pwsh
+        run: |
+          $stdout = Join-Path $PWD "receiver-stdout.log"
+          $stderr = Join-Path $PWD "receiver-stderr.log"
+          $process = Start-Process -FilePath "windows/build/Release/FreeCamReceiver.exe" -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+
+          try {
+            Start-Sleep -Milliseconds 750
+            python tools/protocol_smoke_test.py
+            Start-Sleep -Milliseconds 500
+          }
+          finally {
+            if (-not $process.HasExited) {
+              Stop-Process -Id $process.Id -Force
+            }
+          }
+
+          Get-Content $stdout
+          if (Test-Path $stderr) {
+            Get-Content $stderr
+          }
+
+          if (-not (Select-String -Path $stdout -Pattern "VIDEO frame=42")) {
+            throw "Receiver did not report the reassembled smoke-test frame."
+          }
 
       - name: Upload receiver
         uses: actions/upload-artifact@v7

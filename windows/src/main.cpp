@@ -131,6 +131,9 @@ void handle_client(SOCKET client_socket, const sockaddr_in& client_address) {
 } // namespace
 
 int main() {
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
+
     std::signal(SIGINT, handle_signal);
 
     WSADATA wsa_data{};
