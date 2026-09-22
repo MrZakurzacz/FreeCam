@@ -1,0 +1,6 @@
+LIBRARY "FreeCamVirtualCamera"
+EXPORTS
+    DllCanUnloadNow
+    DllGetClassObject
+    DllRegisterServer
+    DllUnregisterServer
