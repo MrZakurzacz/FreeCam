@@ -36,6 +36,11 @@ HMODULE g_module = nullptr;
 std::atomic_long g_object_count{0};
 std::atomic_long g_server_locks{0};
 
+const GUID kMediaSubtypeI420 = {
+    0x30323449, 0x0000, 0x0010,
+    {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}
+};
+
 void free_media_type(AM_MEDIA_TYPE& mt) {
     if (mt.cbFormat != 0) {
         CoTaskMemFree(mt.pbFormat);
@@ -114,7 +119,7 @@ const FormatDescriptor kFormats[] = {
     },
     {
         OutputFormat::I420,
-        &MEDIASUBTYPE_I420,
+        &kMediaSubtypeI420,
         12,
         kYuv420FrameBytes,
         false
